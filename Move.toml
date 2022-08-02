@@ -6,7 +6,7 @@ version = "0.0.0"
 std = "0x1"
 aptos_std = "0x1"
 aptos_framework = "0x1"
-MainAccount = "_"
+AMMPractice = "0x2"
 
 [dependencies]
 AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-framework/", rev = "main" }
