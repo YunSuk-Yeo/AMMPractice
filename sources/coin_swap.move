@@ -65,27 +65,69 @@ module AMMPractice::CoinSwap {
         deposit<CoinA, CoinB, CoinLP>(account, creator, amount_a, amount_b);
     }
 
+    public entry fun withdraw<CoinA, CoinB, CoinLP>(
+        account: &signer,
+        creator: address,
+        amount_lp: u64,
+    ) acquires CoinStore, Capabilities {
+        withdraw_internal<CoinA, CoinB, CoinLP>(account, creator, amount_lp);
+    }
+
+    fun withdraw_internal<CoinA, CoinB, CoinLP>(
+        account: &signer,
+        creator: address,
+        amount_lp: u64,
+    ) acquires CoinStore, Capabilities {
+        let withdrawer = signer::address_of(account);
+
+        let coin_store = borrow_global_mut<CoinStore<CoinA, CoinB>>(creator);
+        let supply_lp = *option::borrow(&coin::supply<CoinLP>());
+        let pool_amount_a = coin::value<CoinA>(&coin_store.coin_a);
+        let pool_amount_b = coin::value<CoinB>(&coin_store.coin_b);
+
+        let amount_a = ((pool_amount_a as u128) * (amount_lp as u128) / supply_lp as u64);
+        let amount_b = ((pool_amount_b as u128) * (amount_lp as u128) / supply_lp as u64);
+
+        // withdraw coins from CoinStore
+        let coin_a = coin::extract<CoinA>(&mut coin_store.coin_a, amount_a);
+        let coin_b = coin::extract<CoinB>(&mut coin_store.coin_b, amount_b);
+
+        // deposit withdrawn coins
+        coin::deposit<CoinA>(withdrawer, coin_a);
+        coin::deposit<CoinB>(withdrawer, coin_b);
+
+        // burn LP coin
+        let capabilities = borrow_global<Capabilities<CoinLP>>(creator);
+        coin::burn_from(signer::address_of(account), amount_lp, &capabilities.burn_cap);
+
+        event::emit_event<WithdrawEvent>(
+            &mut coin_store.withdraw_events,
+            WithdrawEvent {
+                withdrawer,
+                amount_a,
+                amount_b,
+            }
+        );
+    }
+
     public entry fun deposit<CoinA, CoinB, CoinLP>(
         account: &signer,
         creator: address,
         amount_a: u64,
         amount_b: u64,
     ) acquires CoinStore, Capabilities {
-        let coin_a = coin::withdraw<CoinA>(account, amount_a);
-        let coin_b = coin::withdraw<CoinB>(account, amount_b);
-        
-        deposit_internal<CoinA, CoinB, CoinLP>(account, creator, coin_a, coin_b);
+        deposit_internal<CoinA, CoinB, CoinLP>(account, creator, amount_a, amount_b);
     }
 
     fun deposit_internal<CoinA, CoinB, CoinLP>(
         account: &signer,
         creator: address,
-        coin_a: Coin<CoinA>,
-        coin_b: Coin<CoinB>,
+        amount_a: u64,
+        amount_b: u64,
     ) acquires CoinStore, Capabilities {
         let depositor = signer::address_of(account);
-        let amount_a = coin::value<CoinA>(&coin_a);
-        let amount_b = coin::value<CoinB>(&coin_b);
+        let coin_a = coin::withdraw<CoinA>(account, amount_a);
+        let coin_b = coin::withdraw<CoinB>(account, amount_b);
 
         if (!exists<CoinStore<CoinA, CoinB>>(creator)) {
             move_to(account, CoinStore<CoinA, CoinB>{
@@ -113,16 +155,16 @@ module AMMPractice::CoinSwap {
         
         // mint LP token
         let capabilities = borrow_global<Capabilities<CoinLP>>(creator);
-        let lp_supply = option::borrow(&coin::supply<CoinLP>());
-        if (*lp_supply == 0) {
+        let supply_lp = *option::borrow(&coin::supply<CoinLP>());
+        if (supply_lp == 0) {
             let coins_minted = coin::mint(100 * 1000000u64, &capabilities.mint_cap);
             coin::deposit(depositor, coins_minted);
         } else {
             let pool_amount_a = coin::value<CoinA>(&coin_store.coin_a);
             let pool_amount_b = coin::value<CoinB>(&coin_store.coin_b);
 
-            let a_ratio = (*lp_supply) * (amount_a as u128) / ((pool_amount_a - amount_a) as u128);
-            let b_ratio = (*lp_supply) * (amount_b as u128) / ((pool_amount_b - amount_b) as u128);
+            let a_ratio = (supply_lp) * (amount_a as u128) / ((pool_amount_a - amount_a) as u128);
+            let b_ratio = (supply_lp) * (amount_b as u128) / ((pool_amount_b - amount_b) as u128);
             let minimum: u128 = if (a_ratio > b_ratio) b_ratio else a_ratio;
 
             // mint minimum amount of LP coin
@@ -133,9 +175,9 @@ module AMMPractice::CoinSwap {
 
     fun pool_info<CoinA, CoinB, CoinLP>(creator: address): (u64, u64, u128) acquires CoinStore {
         let coin_store = borrow_global<CoinStore<CoinA, CoinB>>(creator);
-        let lp_supply = option::borrow(&coin::supply<CoinLP>());
+        let supply_lp = *option::borrow(&coin::supply<CoinLP>());
         
-        (coin::value<CoinA>(&coin_store.coin_a), coin::value<CoinB>(&coin_store.coin_b), *lp_supply)
+        (coin::value<CoinA>(&coin_store.coin_a), coin::value<CoinB>(&coin_store.coin_b), supply_lp)
     }
 
     //
@@ -268,5 +310,40 @@ module AMMPractice::CoinSwap {
         assert!(amount_a == 110 * 1000000u64, 4);
         assert!(amount_b == 120 * 1000000u64, 5);
         assert!(amount_lp == 110 * 1000000u128, 6);
+    }
+
+    #[test(account = @0x2)]
+    public entry fun test_withdraw(
+        account: signer,
+    ) acquires CoinStore, Capabilities {
+        let account_address = signer::address_of(&account);
+        account::create_account(account_address);
+        create_fake_coins(&account);
+
+        initialize<FakeCoinA, FakeCoinB, FakeCoinLP>(
+            &account,
+            100000000u64,
+            100000000u64,
+        );
+
+        assert!(coin::balance<FakeCoinA>(account_address) == 9900 * 1000000, 1);
+        assert!(coin::balance<FakeCoinB>(account_address) == 9900 * 1000000, 2);
+        assert!(coin::balance<FakeCoinLP>(account_address) == 100 * 1000000, 3);
+
+        // withdraw half
+        withdraw<FakeCoinA, FakeCoinB, FakeCoinLP>(
+            &account,
+            account_address,
+            50 * 1000000u64,
+        );
+
+        assert!(coin::balance<FakeCoinA>(account_address) == 9950 * 1000000, 4);
+        assert!(coin::balance<FakeCoinB>(account_address) == 9950 * 1000000, 5);
+        assert!(coin::balance<FakeCoinLP>(account_address) == 50 * 1000000, 6);
+
+        let (amount_a, amount_b, amount_lp) = pool_info<FakeCoinA, FakeCoinB, FakeCoinLP>(account_address);
+        assert!(amount_a == 50 * 1000000u64, 4);
+        assert!(amount_b == 50 * 1000000u64, 5);
+        assert!(amount_lp == 50 * 1000000u128, 6);
     }
 }
