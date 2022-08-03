@@ -1,10 +1,12 @@
 module AMMPractice::CoinSwap {
     use std::string;
-    use std::option::{Self};
+    use std::option::{Self, Option};
     use std::signer;
     use aptos_std::event::{Self, EventHandle};
     use aptos_framework::coin::{Self, Coin, BurnCapability, MintCapability};
     use aptos_framework::coins::{Self};
+
+    const ENO_MINIMUM_RECEIVE: u64 = 0;
 
     struct Capabilities<phantom CoinLP> has key {
         mint_cap: MintCapability<CoinLP>,
@@ -62,21 +64,31 @@ module AMMPractice::CoinSwap {
         });
 
         let creator = signer::address_of(account);
-        deposit<CoinA, CoinB, CoinLP>(account, creator, amount_a, amount_b);
+        deposit_internal<CoinA, CoinB, CoinLP>(account, creator, amount_a, amount_b, option::none());
     }
 
     public entry fun withdraw<CoinA, CoinB, CoinLP>(
         account: &signer,
         creator: address,
         amount_lp: u64,
+        minimum_receive_a: u64,
+        minimum_receive_b: u64,
     ) acquires CoinStore, Capabilities {
-        withdraw_internal<CoinA, CoinB, CoinLP>(account, creator, amount_lp);
+        withdraw_internal<CoinA, CoinB, CoinLP>(
+            account, 
+            creator, 
+            amount_lp,
+            minimum_receive_a,
+            minimum_receive_b,
+        );
     }
 
     fun withdraw_internal<CoinA, CoinB, CoinLP>(
         account: &signer,
         creator: address,
         amount_lp: u64,
+        minimum_receive_a: u64,
+        minimum_receive_b: u64,
     ) acquires CoinStore, Capabilities {
         let withdrawer = signer::address_of(account);
 
@@ -85,8 +97,12 @@ module AMMPractice::CoinSwap {
         let pool_amount_a = coin::value<CoinA>(&coin_store.coin_a);
         let pool_amount_b = coin::value<CoinB>(&coin_store.coin_b);
 
+        // return LP portion of coins
         let amount_a = ((pool_amount_a as u128) * (amount_lp as u128) / supply_lp as u64);
         let amount_b = ((pool_amount_b as u128) * (amount_lp as u128) / supply_lp as u64);
+
+        assert!(amount_a >= minimum_receive_a, ENO_MINIMUM_RECEIVE);
+        assert!(amount_b >= minimum_receive_b, ENO_MINIMUM_RECEIVE);
 
         // withdraw coins from CoinStore
         let coin_a = coin::extract<CoinA>(&mut coin_store.coin_a, amount_a);
@@ -115,8 +131,9 @@ module AMMPractice::CoinSwap {
         creator: address,
         amount_a: u64,
         amount_b: u64,
+        minimum_receive_lp: u64,
     ) acquires CoinStore, Capabilities {
-        deposit_internal<CoinA, CoinB, CoinLP>(account, creator, amount_a, amount_b);
+        deposit_internal<CoinA, CoinB, CoinLP>(account, creator, amount_a, amount_b, option::some(minimum_receive_lp));
     }
 
     fun deposit_internal<CoinA, CoinB, CoinLP>(
@@ -124,6 +141,7 @@ module AMMPractice::CoinSwap {
         creator: address,
         amount_a: u64,
         amount_b: u64,
+        minimum_receive_lp: Option<u64>,
     ) acquires CoinStore, Capabilities {
         let depositor = signer::address_of(account);
         let coin_a = coin::withdraw<CoinA>(account, amount_a);
@@ -165,7 +183,12 @@ module AMMPractice::CoinSwap {
 
             let a_ratio = (supply_lp) * (amount_a as u128) / ((pool_amount_a - amount_a) as u128);
             let b_ratio = (supply_lp) * (amount_b as u128) / ((pool_amount_b - amount_b) as u128);
+
             let minimum: u128 = if (a_ratio > b_ratio) b_ratio else a_ratio;
+            if (option::is_some(&minimum_receive_lp)) {
+                let minimum_receive_lp: u128 = (*option::borrow(&minimum_receive_lp) as u128);
+                assert!(minimum >= minimum_receive_lp, ENO_MINIMUM_RECEIVE);
+            };
 
             // mint minimum amount of LP coin
             let coins_minted = coin::mint((minimum as u64), &capabilities.mint_cap);
@@ -300,6 +323,7 @@ module AMMPractice::CoinSwap {
             account_address,
             10 * 1000000u64,
             20 * 1000000u64,
+            5 * 1000000u64,
         );
 
         assert!(coin::balance<FakeCoinA>(account_address) == 9890000000, 1);
@@ -310,6 +334,35 @@ module AMMPractice::CoinSwap {
         assert!(amount_a == 110 * 1000000u64, 4);
         assert!(amount_b == 120 * 1000000u64, 5);
         assert!(amount_lp == 110 * 1000000u128, 6);
+    }
+
+    #[test(account = @0x2)]
+    #[expected_failure(abort_code = 0x0)]
+    public entry fun fail_deposit(
+        account: signer,
+    ) acquires CoinStore, Capabilities {
+        let account_address = signer::address_of(&account);
+        account::create_account(account_address);
+        create_fake_coins(&account);
+
+        initialize<FakeCoinA, FakeCoinB, FakeCoinLP>(
+            &account,
+            100000000u64,
+            100000000u64,
+        );
+
+        assert!(coin::balance<FakeCoinA>(account_address) == 9900000000, 1);
+        assert!(coin::balance<FakeCoinB>(account_address) == 9900000000, 2);
+        assert!(coin::balance<FakeCoinLP>(account_address) == 100000000, 3);
+
+        // deposit in different ratio
+        deposit<FakeCoinA, FakeCoinB, FakeCoinLP>(
+            &account,
+            account_address,
+            10 * 1000000u64,
+            20 * 1000000u64,
+            12 * 1000000u64,
+        );
     }
 
     #[test(account = @0x2)]
@@ -335,6 +388,8 @@ module AMMPractice::CoinSwap {
             &account,
             account_address,
             50 * 1000000u64,
+            50 * 1000000u64,
+            50 * 1000000u64,
         );
 
         assert!(coin::balance<FakeCoinA>(account_address) == 9950 * 1000000, 4);
@@ -345,5 +400,63 @@ module AMMPractice::CoinSwap {
         assert!(amount_a == 50 * 1000000u64, 4);
         assert!(amount_b == 50 * 1000000u64, 5);
         assert!(amount_lp == 50 * 1000000u128, 6);
+    }
+
+    #[test(account = @0x2)]
+    #[expected_failure(abort_code = 0x0)]
+    public entry fun fail_withdraw_due_to_a(
+        account: signer,
+    ) acquires CoinStore, Capabilities {
+        let account_address = signer::address_of(&account);
+        account::create_account(account_address);
+        create_fake_coins(&account);
+
+        initialize<FakeCoinA, FakeCoinB, FakeCoinLP>(
+            &account,
+            100000000u64,
+            100000000u64,
+        );
+
+        assert!(coin::balance<FakeCoinA>(account_address) == 9900 * 1000000, 1);
+        assert!(coin::balance<FakeCoinB>(account_address) == 9900 * 1000000, 2);
+        assert!(coin::balance<FakeCoinLP>(account_address) == 100 * 1000000, 3);
+
+        // withdraw half
+        withdraw<FakeCoinA, FakeCoinB, FakeCoinLP>(
+            &account,
+            account_address,
+            50 * 1000000u64,
+            60 * 1000000u64,
+            50 * 1000000u64,
+        );
+    }
+
+    #[test(account = @0x2)]
+    #[expected_failure(abort_code = 0x0)]
+    public entry fun fail_withdraw_due_to_b(
+        account: signer,
+    ) acquires CoinStore, Capabilities {
+        let account_address = signer::address_of(&account);
+        account::create_account(account_address);
+        create_fake_coins(&account);
+
+        initialize<FakeCoinA, FakeCoinB, FakeCoinLP>(
+            &account,
+            100000000u64,
+            100000000u64,
+        );
+
+        assert!(coin::balance<FakeCoinA>(account_address) == 9900 * 1000000, 1);
+        assert!(coin::balance<FakeCoinB>(account_address) == 9900 * 1000000, 2);
+        assert!(coin::balance<FakeCoinLP>(account_address) == 100 * 1000000, 3);
+
+        // withdraw half
+        withdraw<FakeCoinA, FakeCoinB, FakeCoinLP>(
+            &account,
+            account_address,
+            50 * 1000000u64,
+            50 * 1000000u64,
+            60 * 1000000u64,
+        );
     }
 }
