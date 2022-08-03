@@ -1,5 +1,5 @@
 ## Move Language Practice Repo
-This project is test repository for Move Language. It's mimicking UniswapV2 style constant product AMM.
+This project is test repository for Move Language. It's mimicking `UniswapV2` style constant product AMM.
 
 ### How to test
 ```shell
