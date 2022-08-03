@@ -6,7 +6,9 @@ version = "0.0.0"
 std = "0x1"
 aptos_std = "0x1"
 aptos_framework = "0x1"
-AMMPractice = "0x2"
+AMMPractice= "0x3eaecf6da971afa0086a9ecca22840254636cb64cff4ddf003ee6fced81de886"
 
 [dependencies]
 AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-framework/", rev = "main" }
+AptosStdlib = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-stdlib/", rev = "main" }
+MoveStdlib = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/move-stdlib/", rev = "main" }
