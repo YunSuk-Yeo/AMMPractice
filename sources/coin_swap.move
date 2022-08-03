@@ -89,25 +89,14 @@ module AMMPractice::CoinSwap {
         amount_b: u64,
         minimum_receive_lp: u64,
     ) acquires PoolStore, Capabilities {
-        if (exists<PoolStore<CoinA, CoinB>>(creator)) {
-            deposit_internal<CoinA, CoinB, CoinLP>(
-                account, 
-                creator, 
-                amount_a, 
-                amount_b, 
-                option::some(minimum_receive_lp),
-            );
-        } else if (exists<PoolStore<CoinB, CoinA>>(creator)) {
-            deposit_internal<CoinB, CoinA, CoinLP>(
-                account,
-                creator,
-                amount_b,
-                amount_a,
-                option::some(minimum_receive_lp),
-            );
-        } else {
-            abort ENO_POOL_NOT_INITIALIZED
-        };
+        assert!(exists<PoolStore<CoinA, CoinB>>(creator), ENO_POOL_NOT_INITIALIZED);
+        deposit_internal<CoinA, CoinB, CoinLP>(
+            account, 
+            creator, 
+            amount_a, 
+            amount_b, 
+            option::some(minimum_receive_lp),
+        );
     }
 
     fun deposit_internal<CoinA, CoinB, CoinLP>(
@@ -177,25 +166,14 @@ module AMMPractice::CoinSwap {
         minimum_receive_a: u64,
         minimum_receive_b: u64,
     ) acquires PoolStore, Capabilities {
-        if (exists<PoolStore<CoinA, CoinB>>(creator)) {
-            withdraw_internal<CoinA, CoinB, CoinLP>(
-                account, 
-                creator, 
-                amount_lp,
-                minimum_receive_a,
-                minimum_receive_b,
-            );
-        } else if (exists<PoolStore<CoinB, CoinA>>(creator)) {
-            withdraw_internal<CoinB, CoinA, CoinLP>(
-                account, 
-                creator, 
-                amount_lp,
-                minimum_receive_b,
-                minimum_receive_a,
-            );
-        } else {
-            abort ENO_POOL_NOT_INITIALIZED
-        };
+        assert!(exists<PoolStore<CoinA, CoinB>>(creator), ENO_POOL_NOT_INITIALIZED);
+        withdraw_internal<CoinA, CoinB, CoinLP>(
+            account, 
+            creator, 
+            amount_lp,
+            minimum_receive_a,
+            minimum_receive_b,
+        );
     }
 
     fun withdraw_internal<CoinA, CoinB, CoinLP>(
@@ -246,26 +224,16 @@ module AMMPractice::CoinSwap {
         creator: address,
         amount_offer: u64,
         minimum_receive: u64,
+        is_reverse: bool,
     ) acquires PoolStore {
-        if (exists<PoolStore<CoinA, CoinB>>(creator)) {
-            swap_internal<CoinA, CoinB>(
-                account, 
-                creator, 
-                amount_offer, 
-                minimum_receive, 
-                false,
-            );
-        } else if (exists<PoolStore<CoinB, CoinA>>(creator)) {
-            swap_internal<CoinB, CoinA>(
-                account, 
-                creator, 
-                amount_offer, 
-                minimum_receive, 
-                true,
-            );
-        } else {
-            abort ENO_POOL_NOT_INITIALIZED
-        };
+        assert!(exists<PoolStore<CoinA, CoinB>>(creator), ENO_POOL_NOT_INITIALIZED);
+        swap_internal<CoinA, CoinB>(
+            account, 
+            creator, 
+            amount_offer, 
+            minimum_receive, 
+            is_reverse,
+        );
     }
 
     fun swap_internal<CoinA, CoinB>(
@@ -316,20 +284,12 @@ module AMMPractice::CoinSwap {
         );
     }
 
-    public fun pool_info<CoinA, CoinB, CoinLP>(creator: address): (u64, u64, u128) acquires PoolStore {
-        if (exists<PoolStore<CoinA, CoinB>>(creator)) {
-            let coin_store = borrow_global<PoolStore<CoinA, CoinB>>(creator);
-            let supply_lp = *option::borrow(&coin::supply<CoinLP>());
-            
-            (coin::value<CoinA>(&coin_store.coin_a), coin::value<CoinB>(&coin_store.coin_b), supply_lp)
-        } else if (exists<PoolStore<CoinB, CoinA>>(creator)) {
-            let coin_store = borrow_global<PoolStore<CoinB, CoinA>>(creator);
-            let supply_lp = *option::borrow(&coin::supply<CoinLP>());
+    public entry fun pool_info<CoinA, CoinB, CoinLP>(creator: address): (u64, u64, u128) acquires PoolStore {
+        assert!(exists<PoolStore<CoinA, CoinB>>(creator), ENO_POOL_NOT_INITIALIZED);
+        let coin_store = borrow_global<PoolStore<CoinA, CoinB>>(creator);
+        let supply_lp = *option::borrow(&coin::supply<CoinLP>());
         
-            (coin::value<CoinA>(&coin_store.coin_b), coin::value<CoinB>(&coin_store.coin_a), supply_lp)   
-        } else {
-            abort ENO_POOL_NOT_INITIALIZED
-        }
+        (coin::value<CoinA>(&coin_store.coin_a), coin::value<CoinB>(&coin_store.coin_b), supply_lp)
     }
 
     //
@@ -510,12 +470,6 @@ module AMMPractice::CoinSwap {
         assert!(amount_a == 110 * 1000000u64, 4);
         assert!(amount_b == 120 * 1000000u64, 5);
         assert!(amount_lp == 110 * 1000000u128, 6);
-
-        // check reverse way is working
-        let (amount_b, amount_a, amount_lp) = pool_info<FakeCoinB, FakeCoinA, FakeCoinLP>(account_address);
-        assert!(amount_a == 110 * 1000000u64, 4);
-        assert!(amount_b == 120 * 1000000u64, 5);
-        assert!(amount_lp == 110 * 1000000u128, 6);
     }
 
     #[test(account = @0x2)]
@@ -665,6 +619,7 @@ module AMMPractice::CoinSwap {
             account_address,
             10 * 1000000u64,
             9090910u64,
+            false,
         );
 
         let (amount_a, amount_b, amount_lp) = pool_info<FakeCoinA, FakeCoinB, FakeCoinLP>(account_address);
@@ -691,16 +646,17 @@ module AMMPractice::CoinSwap {
         assert!(coin::balance<FakeCoinB>(account_address) == 9900000000, 2);
         assert!(coin::balance<FakeCoinLP>(account_address) == 100000000, 3);
 
-        swap<FakeCoinB, FakeCoinA>(
+        swap<FakeCoinA, FakeCoinB>(
             &account,
             account_address,
             10 * 1000000u64,
             9090910u64,
+            true
         );
 
-        let (amount_a, amount_b, amount_lp) = pool_info<FakeCoinB, FakeCoinA, FakeCoinLP>(account_address);
-        assert!(amount_a == 110 * 1000000u64, 4);
-        assert!(amount_b == 90909090u64, 5);
+        let (amount_a, amount_b, amount_lp) = pool_info<FakeCoinA, FakeCoinB, FakeCoinLP>(account_address);
+        assert!(amount_b == 110 * 1000000u64, 4);
+        assert!(amount_a == 90909090u64, 5);
         assert!(amount_lp == 100 * 1000000u128, 6);
     }
 
@@ -728,6 +684,7 @@ module AMMPractice::CoinSwap {
             account_address,
             10 * 1000000u64,
             9090911u64,
+            false,
         );
     }
 }
