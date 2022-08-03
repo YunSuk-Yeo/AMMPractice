@@ -284,7 +284,7 @@ module AMMPractice::CoinSwap {
         );
     }
 
-    public entry fun pool_info<CoinA, CoinB, CoinLP>(creator: address): (u64, u64, u128) acquires PoolStore {
+    public fun pool_info<CoinA, CoinB, CoinLP>(creator: address): (u64, u64, u128) acquires PoolStore {
         assert!(exists<PoolStore<CoinA, CoinB>>(creator), ENO_POOL_NOT_INITIALIZED);
         let coin_store = borrow_global<PoolStore<CoinA, CoinB>>(creator);
         let supply_lp = *option::borrow(&coin::supply<CoinLP>());
